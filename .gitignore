@@ -1,0 +1,10 @@
+.gradle
+/.idea
+.DS_Store
+/build
+*.iml
+import-summary.txt
+gradle
+openCVLibrary249
+gradlew
+gradlew.bat
