@@ -11,6 +11,7 @@ import org.opencv.android.BaseLoaderCallback;
 import org.opencv.android.CameraBridgeViewBase;
 import org.opencv.android.LoaderCallbackInterface;
 import org.opencv.android.OpenCVLoader;
+import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
@@ -167,16 +168,15 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
 //            iContourAreaMin = 10;
             if (d > iContourAreaMin) {
 
-                double parcial =  total * 0.4;  //130;
+                double epsilon =  total * 0.4;  //130;
 
-                // total* 0.02 -> corrección, intenta dibujar un rectangulo en los contornos encontrados
-                // le asigna a mMOP2f2 los lados encontrados
-                Imgproc.approxPolyDP(mMOP2f1, mMOP2f2, parcial , true);
+                Imgproc.approxPolyDP(mMOP2f1, mMOP2f2, epsilon , true);
 
                 // convert back to MatOfPoint and put it back in the list
                 mMOP2f2.convertTo(contours.get(x), CvType.CV_32S);
 
                 if ( mMOP2f2.total() == 4 ){
+
                     // draw the contour itself
                     Imgproc.drawContours(src, contours, x, colorRed, iLineThickness);
 
@@ -186,14 +186,54 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                         double y3 = point.y;
                         Log.d(TAG, "X encontrado :: " + x3);
                         Log.d(TAG, "Y encontrado :: " + y3);
+                        Core.circle(src, point, 15, colorGreen, iLineThickness - 1);
+                        DrawCross (src, colorGreen, point);
+
                     }
+
+                    // data for analyzer
                     Log.d(TAG, "====== total de contornos :: " + String.valueOf(total));
                     Log.d(TAG, "====== area detectada :: " + String.valueOf(d));
-                    Log.d(TAG, "====== area parcial :: " + String.valueOf(parcial));
+                    Log.d(TAG, "====== area parcial :: " + String.valueOf(epsilon));
+
+                    // get perspective, optional :: it is necessary adjust to support real sizes, but work
+                    MatOfPoint2f dst = new MatOfPoint2f();
+                    dst.push_back(new MatOfPoint(new Point(0,0)));
+                    dst.push_back(new MatOfPoint(new Point(src.cols() - 1,0)));
+                    dst.push_back(new MatOfPoint(new Point(src.cols() - 1,src.rows() - 1)));
+                    dst.push_back(new MatOfPoint(new Point(0,src.rows() - 1)));
+
+                    dst.convertTo(dst, CvType.CV_32F);
+                    mMOP2f2.convertTo(mMOP2f2, CvType.CV_32F);
+
+                    Mat warp_dst = new Mat( src.rows(), src.cols(), src.type() );
+                    Mat perspectiveTransform = Imgproc.getPerspectiveTransform(mMOP2f2, dst);
+                    Imgproc.warpPerspective(src, src, perspectiveTransform, warp_dst.size(), Imgproc.INTER_CUBIC);
                 }
             }
         }
 
         return src;
+    }
+
+    public void DrawCross (Mat mat, Scalar color, Point pt) {
+        int iCentreCrossWidth = 24;
+
+        Point pt1 = new Point();
+        Point pt2 = new Point();
+        pt1.x = pt.x - (iCentreCrossWidth >> 1);
+        pt1.y = pt.y;
+        pt2.x = pt.x + (iCentreCrossWidth >> 1);
+        pt2.y = pt.y;
+
+        Core.line(mat, pt1, pt2, color, iLineThickness - 1);
+
+        pt1.x = pt.x;
+        pt1.y = pt.y + (iCentreCrossWidth >> 1);
+        pt2.x = pt.x;
+        pt2.y = pt.y  - (iCentreCrossWidth >> 1);
+
+        Core.line(mat, pt1, pt2, color, iLineThickness - 1);
+
     }
 }
