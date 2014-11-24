@@ -1,7 +1,12 @@
 package com.patito.buho.opencv04;
 
 import android.app.Activity;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -17,10 +22,15 @@ import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
+import org.opencv.core.Range;
+import org.opencv.core.Rect;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
+import org.opencv.highgui.Highgui;
 import org.opencv.imgproc.Imgproc;
 
+import java.io.File;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -178,7 +188,7 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                 if ( mMOP2f2.total() == 4 ){
 
                     // draw the contour itself
-                    Imgproc.drawContours(src, contours, x, colorRed, iLineThickness);
+//                    Imgproc.drawContours(src, contours, x, colorRed, iLineThickness);
 
                     List<Point> points = mMOP2f2.toList();
                     for (Point point : points) {
@@ -186,8 +196,8 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                         double y3 = point.y;
                         Log.d(TAG, "X encontrado :: " + x3);
                         Log.d(TAG, "Y encontrado :: " + y3);
-                        Core.circle(src, point, 15, colorGreen, iLineThickness - 1);
-                        DrawCross (src, colorGreen, point);
+//                        Core.circle(src, point, 15, colorGreen, iLineThickness - 1);
+//                        DrawCross (src, colorGreen, point);
 
                     }
 
@@ -196,19 +206,72 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
                     Log.d(TAG, "====== area detectada :: " + String.valueOf(d));
                     Log.d(TAG, "====== area parcial :: " + String.valueOf(epsilon));
 
+                    // Get mass center
+                    Point center = new Point(0,0);
+                    for (Point point : points) {
+                        center.x += point.x;
+                        center.y += point.y;
+                    }
+                    center.x *= (1.0 / points.size());
+                    center.y *= (1.0 / points.size());
+
+                    // Get ordered points
+                    List<Point> pointList = sortCorners(points, center);
+
+                    for (Point point : pointList) { // p1(82, 111) p2(811, 113) p3(841, 410) p4(77, 440)
+                        Log.d(TAG, "X ordenado encontrado :: " + point.x);
+                        Log.d(TAG, "Y ordenada encontrado :: " + point.y);
+                    }
+                    Log.d(TAG, "src.rows() :: " + src.rows());
+                    Log.d(TAG, "src.cols() :: " + src.cols());
+
+
+                    // get the max distance between same points
+                    double dist_x1 = pointList.get(1).x - pointList.get(0).x;
+                    double dist_x2 = pointList.get(2).x - pointList.get(3).x;
+                    double disX = dist_x1 > dist_x2 ? dist_x1:dist_x2;
+
+                    double dist_y1 = pointList.get(3).y - pointList.get(0).y;
+                    double dist_y2 = pointList.get(2).y - pointList.get(1).y;
+                    double disY = dist_y1 > dist_y2 ? dist_y1:dist_y2;
+
+                    Log.d(TAG, " aspect relation -> " + disX / disY);
+
                     // get perspective, optional :: it is necessary adjust to support real sizes, but work
                     MatOfPoint2f dst = new MatOfPoint2f();
                     dst.push_back(new MatOfPoint(new Point(0,0)));
-                    dst.push_back(new MatOfPoint(new Point(src.cols() - 1,0)));
-                    dst.push_back(new MatOfPoint(new Point(src.cols() - 1,src.rows() - 1)));
-                    dst.push_back(new MatOfPoint(new Point(0,src.rows() - 1)));
+                    dst.push_back(new MatOfPoint(new Point(disX, 0)));
+                    dst.push_back(new MatOfPoint(new Point(disX, disY)));
+                    dst.push_back(new MatOfPoint(new Point(0, disY)));
+
+                    MatOfPoint2f originalPoints = new MatOfPoint2f();
+
+                    // src.cols() -> x
+                    // src.rows() -> y
+                    originalPoints.push_back(new MatOfPoint(pointList.get(0)));
+                    originalPoints.push_back(new MatOfPoint(pointList.get(1)));
+                    originalPoints.push_back(new MatOfPoint(pointList.get(2)));
+                    originalPoints.push_back(new MatOfPoint(pointList.get(3)));
 
                     dst.convertTo(dst, CvType.CV_32F);
-                    mMOP2f2.convertTo(mMOP2f2, CvType.CV_32F);
+                    originalPoints.convertTo(originalPoints, CvType.CV_32F);
 
                     Mat warp_dst = new Mat( src.rows(), src.cols(), src.type() );
-                    Mat perspectiveTransform = Imgproc.getPerspectiveTransform(mMOP2f2, dst);
-                    Imgproc.warpPerspective(src, src, perspectiveTransform, warp_dst.size(), Imgproc.INTER_CUBIC);
+                    Mat dest = new Mat( dst.rows(), dst.cols(), dst.type() );
+
+                    Mat perspectiveTransform = Imgproc.getPerspectiveTransform(originalPoints, dst);
+                    Imgproc.warpPerspective(src, dest, perspectiveTransform, warp_dst.size(), Imgproc.INTER_NEAREST);
+
+
+                    int length = new BigDecimal(disX).intValue();
+                    int higth = new BigDecimal(disY).intValue();
+
+                    Rect roi = new Rect(0, 0, length, higth);
+                    Mat cheque = dest.submat(roi);
+
+                    takePhoto(cheque);
+
+                    return dest;
                 }
             }
         }
@@ -216,7 +279,31 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
         return src;
     }
 
-    public void DrawCross (Mat mat, Scalar color, Point pt) {
+    private List<Point> sortCorners(List<Point> corners, Point center) {
+
+        List<Point> top = new ArrayList<Point>(), bot = new ArrayList<Point>();
+        for (Point corner : corners) {
+            if (corner.y < center.y)
+                top.add(corner);
+            else
+                bot.add(corner);
+        }
+        List<Point> corners_sorted = new ArrayList<Point>();
+        if (top.size() == 2 && bot.size() == 2){
+            Point tl = top.get(0).x > top.get(1).x ? top.get(1) : top.get(0);
+            Point tr = top.get(0).x > top.get(1).x ? top.get(0) : top.get(1);
+            Point bl = bot.get(0).x > bot.get(1).x ? bot.get(1) : bot.get(0);
+            Point br = bot.get(0).x > bot.get(1).x ? bot.get(0) : bot.get(1);
+            corners_sorted.add(tl);
+            corners_sorted.add(tr);
+            corners_sorted.add(br);
+            corners_sorted.add(bl);
+        }
+
+        return corners_sorted;
+    }
+
+    private void DrawCross (Mat mat, Scalar color, Point pt) {
         int iCentreCrossWidth = 24;
 
         Point pt1 = new Point();
@@ -235,5 +322,63 @@ public class MainActivity extends Activity implements CameraBridgeViewBase.CvCam
 
         Core.line(mat, pt1, pt2, color, iLineThickness - 1);
 
+    }
+
+    private void takePhoto(final Mat rgba) {
+        // determine  the path and metadata for the photo
+        final long currentTimeMillis = System.currentTimeMillis();
+        final String app_name = getString(R.string.app_name);
+        final String galleryPath = Environment.getExternalStoragePublicDirectory(Environment
+                .DIRECTORY_PICTURES)
+                .toString();
+        final String albumPath = galleryPath + "/" + app_name;
+        final String photoPath = albumPath + "/" + currentTimeMillis + ".png";
+        final ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DATA, photoPath);
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+        values.put(MediaStore.Images.Media.TITLE, app_name);
+        values.put(MediaStore.Images.Media.DESCRIPTION, app_name);
+        values.put(MediaStore.Images.Media.DATE_TAKEN, currentTimeMillis);
+
+        // Ensure that the album directory exist
+        File album = new File(albumPath);
+        if ( !album.isDirectory() && !album.mkdirs() ){
+            Log.e(TAG, "Failed to create album directory at " + albumPath);
+//            onTakePhotoFailed();
+            return;
+        }
+
+        // try to create the photo
+        Mat mBgr = new Mat();
+        Imgproc.cvtColor(rgba, mBgr, Imgproc.COLOR_BGR2BGRA, 3);
+        if ( !Highgui.imwrite(photoPath, mBgr)) {
+            Log.e(TAG, "Failed to save photo to " + photoPath);
+//            onTakePhotoFailed();
+            return;
+        }
+
+        Log.d(TAG, "Photo saved successfully to " + photoPath);
+
+        // try to insert the photo into the MediaStore
+        Uri uri;
+        try {
+            uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        } catch (final Exception e) {
+            Log.e(TAG, "Failed to insert photo into MediaStore", e);
+
+            // Since the insertion failed, delete the photo
+            File photo = new File(photoPath);
+            if ( !photo.delete() )
+                Log.e(TAG, "Failed to delete non-inserted photo");
+
+//            onTakePhotoFailed();
+            return;
+        }
+
+        // open the photo in LabActivity
+        /*final Intent intent = new Intent(this, LabActivity.class);
+        intent.putExtra(LabActivity.EXTRA_PHOTO_URI, uri);
+        intent.putExtra(LabActivity.EXTRA_PHOTO_DATA_PATH, photoPath);
+        startActivity(intent);*/
     }
 }
